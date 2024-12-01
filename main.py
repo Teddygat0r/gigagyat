@@ -1,3 +1,4 @@
+import heapq
 from flask import Flask, jsonify, request, abort, g
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -17,8 +18,9 @@ chrome_options.add_argument("--headless=new")
 chrome_options.add_argument("--disable-extensions")
 chrome_options.add_argument("--disable-gpu")
 
-driver = webdriver.Chrome(options=chrome_options)
-
+MAX_DRIVERS = 5
+id_c = 0
+drivers = []
 
 @app.before_request
 def start_timer():
@@ -33,8 +35,22 @@ def log_request_time(response):
         print(f"Request processing time: {duration:.4f} seconds")
     return response
 
+def get_driver():
+    global drivers
+    global id_c
+    if len(drivers) > MAX_DRIVERS:
+        drivers = [x for x in drivers if time.time() - x[1] > 60]
+        heapq.heapify(drivers)
+    elif len(drivers) == 0:
+        heapq.heappush(drivers, (id_c, time.time(), webdriver.Chrome(options=chrome_options)))
+        id_c += 1
+    
+    return heapq.heappop(drivers)
+
 @lru_cache()
 def fetch_ig_code(url):
+    global drivers
+    id, _, driver = get_driver()
     driver.get(url)
     try:
         WebDriverWait(driver, 2).until(
@@ -43,8 +59,10 @@ def fetch_ig_code(url):
 
         a = driver.find_element(By.TAG_NAME, "video")
         data = {"url": a.get_attribute("src")}
+        heapq.heappush(drivers, (id, time.time(), driver))
         return jsonify(data), not a
     except:
+        heapq.heappush(drivers, (id, time.time(), driver))
         return {}, True
 
 @app.route("/api/data", methods=["GET"])
@@ -56,7 +74,6 @@ def get_data():
 
     if error:
         abort(500)
-
     return data
 
 
